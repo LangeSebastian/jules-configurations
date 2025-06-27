@@ -128,6 +128,19 @@ export PATH="$FLUTTER_HOME/bin:$FLUTTER_HOME/bin/cache/dart-sdk/bin:$PATH"
 
 log_info "Flutter PATH set for this session: $PATH"
 
+# Check if FLUTTER_GIT_URL is set by the user.
+if [ -z "$FLUTTER_GIT_URL" ]; then
+    log_info "FLUTTER_GIT_URL is not set."
+    log_info "If you encounter an error from 'flutter doctor' like 'Upstream repository ... is not a standard remote',"
+    log_info "consider setting FLUTTER_GIT_URL to your specific repository URL before running this script."
+    log_info "Example: export FLUTTER_GIT_URL=\"https://your_username:your_token@github.com/your_fork/flutter.git\""
+else
+    log_info "FLUTTER_GIT_URL is already set to: $FLUTTER_GIT_URL"
+    # Export it again just to be absolutely sure it's available for subsequent commands in this script session,
+    # in case it was only set in the parent environment and not exported.
+    export FLUTTER_GIT_URL
+fi
+
 # 4. Configure Flutter to disable Android
 log_info "Disabling Android for Flutter to avoid downloading Android SDK/tools..."
 if ! flutter config --no-enable-android; then
