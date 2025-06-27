@@ -26,8 +26,44 @@ log_error() {
 # --- Prerequisite Checks ---
 # We'll assume basic tools like git, curl, tar, xz are available in Jules's environment.
 # If not, these would need to be installed by the environment's provisioning.
-# For example:
-# sudo apt-get update && sudo apt-get install -y curl git tar xz-utils unzip libglu1-mesa
+log_info "Ensuring prerequisites for web and Linux desktop development are installed..."
+# For web (Chrome/Chromium) and Linux (GTK, Clang, CMake, Ninja, pkg-config, mesa-utils)
+# Note: This script assumes it can run apt-get. If not, these dependencies must be pre-installed.
+if command -v apt-get >/dev/null; then
+    # Check if running as root, if not, prepend sudo if available
+    SUDO_CMD=""
+    if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null; then
+        SUDO_CMD="sudo"
+    elif [ "$(id -u)" -ne 0 ]; then
+        log_error "Not root and sudo not found. Cannot install dependencies. Please ensure they are pre-installed."
+        # Allow to continue, flutter doctor will report missing deps.
+    fi
+
+    log_info "Updating package lists..."
+    $SUDO_CMD apt-get update -y
+
+    log_info "Installing dependencies: curl, git, tar, xz-utils, unzip, libglu1-mesa, libgtk-3-dev, pkg-config, clang, cmake, ninja-build, chromium-browser (or google-chrome-stable if preferred and repo added)"
+    # Using chromium-browser as it's generally available in default repos.
+    # mesa-utils for eglinfo
+    if ! $SUDO_CMD apt-get install -y curl git tar xz-utils unzip libglu1-mesa libgtk-3-dev pkg-config clang cmake ninja-build chromium-browser mesa-utils; then
+        log_error "Failed to install some or all system dependencies. Flutter Doctor may report issues."
+    else
+        log_info "System dependencies installation attempt complete."
+    fi
+    # Set CHROME_EXECUTABLE if chromium-browser was installed
+    if command -v chromium-browser >/dev/null; then
+        export CHROME_EXECUTABLE="chromium-browser"
+        log_info "CHROME_EXECUTABLE set to chromium-browser"
+    elif command -v google-chrome >/dev/null; then
+        export CHROME_EXECUTABLE="google-chrome"
+        log_info "CHROME_EXECUTABLE set to google-chrome"
+    else
+        log_warn "Neither chromium-browser nor google-chrome found after attempting install. Web support may fail."
+    fi
+else
+    log_warn "apt-get not found. Assuming dependencies (curl, git, tar, xz-utils, unzip, libglu1-mesa, libgtk-3-dev, pkg-config, clang, cmake, ninja-build, chromium-browser/google-chrome, mesa-utils) are already installed."
+fi
+
 
 # --- Main Setup Logic ---
 
@@ -92,8 +128,27 @@ export PATH="$FLUTTER_HOME/bin:$FLUTTER_HOME/bin/cache/dart-sdk/bin:$PATH"
 
 log_info "Flutter PATH set for this session: $PATH"
 
-# 4. Run Flutter Precache
-log_info "Running 'flutter precache' to download development binaries..."
+# 4. Configure Flutter to disable Android
+log_info "Disabling Android for Flutter to avoid downloading Android SDK/tools..."
+if ! flutter config --no-enable-android; then
+    log_warn "Could not disable Android platform. Continuing, but Android components might still be downloaded or checked."
+else
+    log_info "Android platform disabled for Flutter."
+fi
+
+# 5. Run Flutter Precache
+log_info "Running 'flutter precache' to download development binaries (Android should be skipped)..."
+# We will specify platforms to be absolutely sure, if possible.
+# However, `flutter precache` doesn't have direct flags to include/exclude specific platforms like android.
+# `flutter config --no-enable-android` is the primary way.
+# Let's also enable web and linux explicitly to guide precache.
+log_info "Enabling web and linux platforms explicitly..."
+if ! flutter config --enable-web --enable-linux-desktop; then
+    log_warn "Could not explicitly enable web/linux platforms. Precache might not be optimal."
+else
+    log_info "Web and Linux desktop platforms enabled."
+fi
+
 if ! flutter precache; then
     log_error "flutter precache command failed. There might be issues with the network or SDK download."
     # Attempt to run doctor anyway, it might provide more clues.
@@ -101,7 +156,7 @@ else
     log_info "flutter precache completed successfully."
 fi
 
-# 5. Run Flutter Doctor
+# 6. Run Flutter Doctor
 log_info "Running 'flutter doctor -v' to check setup..."
 if ! flutter doctor -v; then
     log_error "flutter doctor reported issues. Please review the output above."
@@ -111,7 +166,7 @@ else
     log_info "flutter doctor check completed."
 fi
 
-# 6. Final Confirmation
+# 7. Final Confirmation
 log_info "Flutter SDK setup script finished."
 log_info "Flutter is installed at: $FLUTTER_HOME"
 log_info "Make sure to use the updated PATH in subsequent commands in this session."
