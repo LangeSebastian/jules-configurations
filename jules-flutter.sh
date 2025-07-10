@@ -71,11 +71,22 @@ fi
 
 # Check for DISPLAY variable, important for Linux desktop UI.
 # For Jules Agent: If Linux desktop apps with UI are tested, DISPLAY needs to be correctly configured in the VM.
-if [ -z "$DISPLAY" ]; then
-    log_warn "DISPLAY environment variable is not set. Setting DISPLAY=:99 for headless operation."
-    export DISPLAY=:99
-else
+# If DISPLAY is not set, and we are not already inside an xvfb-run session (indicated by XVFB_RUN_PID),
+# re-execute the script under xvfb-run.
+if [ -z "$DISPLAY" ] && [ -z "$XVFB_RUN_PID" ]; then
+    log_info "DISPLAY not set and not in Xvfb. Re-executing script with xvfb-run..."
+    # Construct the command to re-execute the script with all original arguments
+    # Using the absolute path of the script and "$@" for all arguments
+    script_path=$(readlink -f "$0")
+    exec xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" "$script_path" "$@"
+fi
+
+# If DISPLAY is set (either by user or by xvfb-run), log it.
+if [ -n "$DISPLAY" ]; then
     log_info "DISPLAY environment variable is set to: $DISPLAY"
+else
+    # This case should ideally not be reached if xvfb-run is working correctly.
+    log_warn "DISPLAY environment variable is not set, and xvfb-run did not set it. UI operations may fail."
 fi
 
 
