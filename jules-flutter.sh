@@ -72,7 +72,8 @@ fi
 # Check for DISPLAY variable, important for Linux desktop UI.
 # For Jules Agent: If Linux desktop apps with UI are tested, DISPLAY needs to be correctly configured in the VM.
 if [ -z "$DISPLAY" ]; then
-    log_warn "DISPLAY environment variable is not set. Flutter Linux desktop applications requiring UI may not run correctly without it (e.g., in a headless CI environment without Xvfb or similar)."
+    log_warn "DISPLAY environment variable is not set. Setting DISPLAY=:99 for headless operation."
+    export DISPLAY=:99
 else
     log_info "DISPLAY environment variable is set to: $DISPLAY"
 fi
