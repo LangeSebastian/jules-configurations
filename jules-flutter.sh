@@ -3,7 +3,7 @@
 # Script to set up the Flutter SDK environment for Jules (AI Agent)
 # This script is intended to be run in a Linux-based sandbox environment.
 # It will download the Flutter SDK if not already present, set PATH,
-# and run flutter doctor.
+# configure for Web and Linux Desktop ONLY, and run flutter doctor.
 
 set -e # Exit immediately if a command exits with a non-zero status.
 
@@ -11,12 +11,15 @@ set -e # Exit immediately if a command exits with a non-zero status.
 FLUTTER_SDK_DIR="$HOME/flutter_sdk"
 FLUTTER_CHANNEL="stable" # Specify channel: stable, beta, master
 FLUTTER_VERSION="latest" # Specify version, e.g., "3.19.0" or "latest" for channel
-FLUTTER_SDK_URL_BASE="https://storage.googleapis.com/flutter_infra_release/releases/stable/linux"
-# Example URL: https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.19.0-stable.tar.xz
+# FLUTTER_SDK_URL_BASE="https://storage.googleapis.com/flutter_infra_release/releases/stable/linux" # Kept for reference, but git clone is preferred
 
 # --- Helper Functions ---
 log_info() {
     echo "INFO: $1"
+}
+
+log_warn() {
+    echo "WARN: $1" >&2
 }
 
 log_error() {
@@ -24,13 +27,11 @@ log_error() {
 }
 
 # --- Prerequisite Checks ---
-# We'll assume basic tools like git, curl, tar, xz are available in Jules's environment.
-# If not, these would need to be installed by the environment's provisioning.
+# For Jules Agent: These dependencies are crucial for web and Linux desktop development.
+# The script attempts to install them using apt-get if available.
+# If apt-get is not available or fails, the environment must have these pre-installed.
 log_info "Ensuring prerequisites for web and Linux desktop development are installed..."
-# For web (Chrome/Chromium) and Linux (GTK, Clang, CMake, Ninja, pkg-config, mesa-utils)
-# Note: This script assumes it can run apt-get. If not, these dependencies must be pre-installed.
 if command -v apt-get >/dev/null; then
-    # Check if running as root, if not, prepend sudo if available
     SUDO_CMD=""
     if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null; then
         SUDO_CMD="sudo"
@@ -39,63 +40,60 @@ if command -v apt-get >/dev/null; then
         # Allow to continue, flutter doctor will report missing deps.
     fi
 
-    log_info "Updating package lists..."
+    log_info "Updating package lists (requires sudo if not root)..."
     $SUDO_CMD apt-get update -y
 
-    log_info "Installing dependencies: curl, git, tar, xz-utils, unzip, libglu1-mesa, libgtk-3-dev, pkg-config, clang, cmake, ninja-build, chromium-browser (or google-chrome-stable if preferred and repo added)"
+    log_info "Installing dependencies: curl, git, tar, xz-utils, unzip, libglu1-mesa, libgtk-3-dev, pkg-config, clang, cmake, ninja-build, chromium-browser, mesa-utils (requires sudo if not root)"
     # Using chromium-browser as it's generally available in default repos.
-    # mesa-utils for eglinfo
+    # mesa-utils for eglinfo (graphics info, useful for Linux desktop)
     if ! $SUDO_CMD apt-get install -y curl git tar xz-utils unzip libglu1-mesa libgtk-3-dev pkg-config clang cmake ninja-build chromium-browser mesa-utils; then
         log_error "Failed to install some or all system dependencies. Flutter Doctor may report issues."
     else
         log_info "System dependencies installation attempt complete."
     fi
-    # Set CHROME_EXECUTABLE if chromium-browser was installed
+
+    # Set CHROME_EXECUTABLE based on common browser commands
     if command -v chromium-browser >/dev/null; then
         export CHROME_EXECUTABLE="chromium-browser"
         log_info "CHROME_EXECUTABLE set to chromium-browser"
-    elif command -v google-chrome >/dev/null; then
+    elif command -v google-chrome >/dev/null; then # Fallback to google-chrome
         export CHROME_EXECUTABLE="google-chrome"
         log_info "CHROME_EXECUTABLE set to google-chrome"
+    elif command -v chromium >/dev/null; then # Fallback to chromium (e.g. snap package)
+        export CHROME_EXECUTABLE="chromium"
+        log_info "CHROME_EXECUTABLE set to chromium"
     else
-        log_warn "Neither chromium-browser nor google-chrome found after attempting install. Web support may fail."
+        log_warn "Neither chromium-browser, google-chrome, nor chromium found after attempting install. Web support may fail or require manual CHROME_EXECUTABLE setup."
     fi
 else
-    log_warn "apt-get not found. Assuming dependencies (curl, git, tar, xz-utils, unzip, libglu1-mesa, libgtk-3-dev, pkg-config, clang, cmake, ninja-build, chromium-browser/google-chrome, mesa-utils) are already installed."
+    log_warn "apt-get not found. Assuming essential dependencies (curl, git, tar, xz-utils, unzip, libglu1-mesa, libgtk-3-dev, pkg-config, clang, cmake, ninja-build, a Chrome/Chromium browser, mesa-utils) are already installed."
+fi
+
+# Check for DISPLAY variable, important for Linux desktop UI.
+# For Jules Agent: If Linux desktop apps with UI are tested, DISPLAY needs to be correctly configured in the VM.
+if [ -z "$DISPLAY" ]; then
+    log_warn "DISPLAY environment variable is not set. Flutter Linux desktop applications requiring UI may not run correctly without it (e.g., in a headless CI environment without Xvfb or similar)."
+else
+    log_info "DISPLAY environment variable is set to: $DISPLAY"
 fi
 
 
 # --- Main Setup Logic ---
 
-# 1. Determine Flutter SDK Download URL
-# This logic is simplified; a more robust version would query for the exact latest version if "latest" is specified.
-# For now, we'll construct a common URL pattern.
-# A more robust way would be to use `git clone --depth 1 --branch $FLUTTER_CHANNEL https://github.com/flutter/flutter.git $FLUTTER_SDK_DIR`
-# but cloning can be slower than downloading a tarball for a specific version.
-# We will prefer git clone for simplicity and to easily switch channels/versions if needed by the agent later.
-
+# 1. Determine Flutter SDK source
+# For Jules Agent: Using git clone is preferred for flexibility with channels/versions.
 if [ "$FLUTTER_VERSION" == "latest" ]; then
-    # For "latest" on a channel, git clone is the most straightforward.
     log_info "Using git to clone the latest from Flutter channel: $FLUTTER_CHANNEL."
 else
-    # This part is tricky as direct tarball URLs for specific versions change.
-    # The SDK archive page is the best source: https://docs.flutter.dev/development/tools/sdk/archive?tab=linux
-    # For a script, `git clone` and then `git checkout <version_tag>` is more reliable.
     log_info "Specific version requested: $FLUTTER_VERSION. Will use git clone and checkout."
 fi
 
 # 2. Install or Update Flutter SDK
 if [ -d "$FLUTTER_SDK_DIR/bin/flutter" ]; then
     log_info "Flutter SDK already found at $FLUTTER_SDK_DIR."
-    # Optionally, add logic here to check if it's the correct channel/version and update if necessary.
-    # For now, we assume if it exists, it's usable or will be managed by subsequent flutter commands.
-    # cd "$FLUTTER_SDK_DIR"
-    # log_info "Attempting to update Flutter SDK..."
-    # git pull
-    # flutter upgrade # if needed
-    # cd - > /dev/null
+    # Basic check: if directory exists, assume it's managed or will be updated by flutter commands.
 else
-    log_info "Flutter SDK not found. Cloning from GitHub..."
+    log_info "Flutter SDK not found. Cloning from GitHub (channel: $FLUTTER_CHANNEL)..."
     if ! git clone --depth 1 --branch "$FLUTTER_CHANNEL" https://github.com/flutter/flutter.git "$FLUTTER_SDK_DIR"; then
         log_error "Failed to clone Flutter SDK. Please check network connection and git installation."
         exit 1
@@ -105,50 +103,65 @@ fi
 
 # If a specific version (tag) was requested, try to check it out.
 if [ "$FLUTTER_VERSION" != "latest" ]; then
-    log_info "Checking out Flutter version: $FLUTTER_VERSION..."
+    log_info "Attempting to checkout Flutter version: $FLUTTER_VERSION..."
     cd "$FLUTTER_SDK_DIR"
+    # Fetch tags first to ensure the version tag is available, especially if the repo was cloned shallowly or is old.
+    log_info "Fetching all tags to ensure version $FLUTTER_VERSION is available..."
+    if ! git fetch --all --tags; then
+        log_warn "git fetch --all --tags failed. Version checkout might fail if $FLUTTER_VERSION is a new tag not present in the initial shallow clone."
+    fi
     if ! git checkout "$FLUTTER_VERSION"; then
-        log_error "Failed to checkout Flutter version $FLUTTER_VERSION. It might not exist on channel $FLUTTER_CHANNEL."
-        # Attempt to fetch tags and retry, in case the local repo doesn't have it yet
-        git fetch --all --tags
-        if ! git checkout "$FLUTTER_VERSION"; then
-             log_error "Still failed to checkout Flutter version $FLUTTER_VERSION after fetching tags."
-             cd - > /dev/null
-             exit 1
-        fi
+        log_error "Failed to checkout Flutter version $FLUTTER_VERSION. It might not exist on channel $FLUTTER_CHANNEL or was not fetched successfully."
+        cd - > /dev/null # Go back to previous directory
+        exit 1
     fi
     log_info "Successfully checked out Flutter version $FLUTTER_VERSION."
-    cd - > /dev/null
+    cd - > /dev/null # Go back to previous directory
 fi
 
 
 # 3. Set Environment Variables for the current script execution
 export FLUTTER_HOME="$FLUTTER_SDK_DIR"
 export PATH="$FLUTTER_HOME/bin:$FLUTTER_HOME/bin/cache/dart-sdk/bin:$PATH"
-
 log_info "Flutter PATH set for this session: $PATH"
+log_info "Dart SDK (bundled with Flutter) also added to PATH."
 
-# 4. Configure Flutter to disable Android
-log_info "Disabling Android for Flutter to avoid downloading Android SDK/tools..."
+
+# 4. Configure Flutter: Disable Mobile Platforms (Android & iOS)
+# For Jules Agent: This is critical to ensure no mobile SDK components are downloaded or expected.
+log_info "Disabling mobile platforms (Android, iOS) for Flutter..."
+FLUTTER_CONFIG_SUCCESS=true
+
 if ! flutter config --no-enable-android; then
-    log_warn "Could not disable Android platform. Continuing, but Android components might still be downloaded or checked."
+    log_warn "Could not disable Android platform. Android components might still be downloaded or checked."
+    FLUTTER_CONFIG_SUCCESS=false
 else
     log_info "Android platform disabled for Flutter."
 fi
 
-# 5. Run Flutter Precache
-log_info "Running 'flutter precache' to download development binaries (Android should be skipped)..."
-# We will specify platforms to be absolutely sure, if possible.
-# However, `flutter precache` doesn't have direct flags to include/exclude specific platforms like android.
-# `flutter config --no-enable-android` is the primary way.
-# Let's also enable web and linux explicitly to guide precache.
-log_info "Enabling web and linux platforms explicitly..."
+if ! flutter config --no-enable-ios; then
+    log_warn "Could not disable iOS platform. iOS components might still be checked (less likely on Linux, but good for explicitness and future-proofing)."
+    FLUTTER_CONFIG_SUCCESS=false
+else
+    log_info "iOS platform disabled for Flutter."
+fi
+
+if [ "$FLUTTER_CONFIG_SUCCESS" = true ]; then
+    log_info "Mobile platforms successfully configured to be disabled."
+fi
+
+# 5. Configure Flutter: Enable Web and Linux Desktop
+# For Jules Agent: These are the target platforms.
+log_info "Enabling web and Linux desktop platforms explicitly..."
 if ! flutter config --enable-web --enable-linux-desktop; then
-    log_warn "Could not explicitly enable web/linux platforms. Precache might not be optimal."
+    log_warn "Could not explicitly enable web and/or linux desktop platforms. Precache and doctor might show issues."
 else
     log_info "Web and Linux desktop platforms enabled."
 fi
 
+# 6. Run Flutter Precache
+# For Jules Agent: Downloads binaries for the enabled platforms (Web, Linux Desktop).
+log_info "Running 'flutter precache' to download development binaries for enabled platforms..."
 if ! flutter precache; then
     log_error "flutter precache command failed. There might be issues with the network or SDK download."
     # Attempt to run doctor anyway, it might provide more clues.
@@ -156,19 +169,24 @@ else
     log_info "flutter precache completed successfully."
 fi
 
-# 6. Run Flutter Doctor
-log_info "Running 'flutter doctor -v' to check setup..."
+# 7. Run Flutter Doctor
+# For Jules Agent: Verify that Web and Linux Desktop are set up. Android/iOS should be shown as unavailable/unconfigured.
+log_info "Running 'flutter doctor -v' to check the setup."
+log_info "For the Jules Agent VM, expect to see 'Linux desktop' and 'Chrome' (for web) as available and configured."
+log_info "Android and iOS sections should indicate they are not enabled or not fully configured, which is intended."
 if ! flutter doctor -v; then
-    log_error "flutter doctor reported issues. Please review the output above."
+    log_error "flutter doctor reported issues. Please review the output above. Check if Linux desktop and Web (Chrome) are correctly set up."
     # The script will still exit with 0 here, as the SDK is "set up" but may have issues.
-    # The calling agent should inspect the doctor output.
+    # The calling agent (Jules) should inspect the doctor output to decide on further actions.
 else
-    log_info "flutter doctor check completed."
+    log_info "flutter doctor check completed. Please verify Linux desktop and Web (Chrome) readiness in the output above."
 fi
 
-# 7. Final Confirmation
-log_info "Flutter SDK setup script finished."
+# 8. Final Confirmation
+log_info "Flutter SDK setup script for Jules Agent finished."
 log_info "Flutter is installed at: $FLUTTER_HOME"
+log_info "Target platforms: Web, Linux Desktop."
+log_info "Mobile platforms (Android, iOS) have been explicitly disabled."
 log_info "Make sure to use the updated PATH in subsequent commands in this session."
 echo ""
 echo "To use this flutter environment in subsequent bash operations within the same 'run_in_bash_session' call, the PATH is already set."
